@@ -6,7 +6,7 @@
 // Conecta equipe, clientes, leads, projetos, tarefas, financeiro
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { Member } from '@/types/member';
 import { Usuario, memberParaUsuario, usuarioParaMember } from '@/types/usuario';
 import { Cliente } from '@/types/cliente';
@@ -22,6 +22,8 @@ import { mockFinancial, FinancialTransaction } from '@/data/mockFinancial';
 import { Automation } from '@/types/automation';
 import { automationEngine } from '@/services/automationEngine';
 import { safeLocalStorageGet, safeLocalStorageSet, initStorageMonitoring, createBackup, restoreBackup } from '@/utils/storageHelpers';
+import { safeParse } from '@/lib/safeParse';
+import { STORAGE_KEYS } from '@/config/storage';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TIPOS DE RELACIONAMENTOS
@@ -189,70 +191,65 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         const savedFollowUps = localStorage.getItem('nebula-followups');
         const savedFinancial = localStorage.getItem('nebula-financial');
         
-        // Membros - simplificado para evitar erros de data
-        // Membros - Restaurar dados originais que estavam funcionando
-        if (savedMembers) {
-          try {
-            const parsed = JSON.parse(savedMembers);
-            setMembers(parsed);
-          } catch (e) {
-            console.warn('Erro ao carregar membros do localStorage, usando mocks:', e);
-            setMembers(mockMembers);
-          }
-        } else {
-          setMembers(mockMembers);
-        }
+        // Membros - com safeParse
+        const parsedMembers = safeParse<Member[]>(
+          savedMembers,
+          mockMembers,
+          { storageKey: STORAGE_KEYS.MEMBERS, silent: true }
+        );
+        setMembers(parsedMembers);
         
-        // Clientes
-        if (savedClients) {
-          setClients(JSON.parse(savedClients));
-        } else {
-          setClients(mockClientes);
-        }
+        // Clientes - com safeParse
+        const parsedClients = safeParse<Cliente[]>(
+          savedClients,
+          mockClientes,
+          { storageKey: STORAGE_KEYS.CLIENTS, silent: true }
+        );
+        setClients(parsedClients);
         
-        // Leads
-        if (savedLeads) {
-          setLeads(JSON.parse(savedLeads));
-        } else {
-          setLeads(mockLeads);
-        }
+        // Leads - com safeParse
+        const parsedLeads = safeParse<Lead[]>(
+          savedLeads,
+          mockLeads,
+          { storageKey: STORAGE_KEYS.LEADS, silent: true }
+        );
+        setLeads(parsedLeads);
         
-        // Projetos
-        if (savedProjects) {
-          const parsed = JSON.parse(savedProjects);
-          setProjects(parsed.map((p: any) => ({
-            ...p,
-            tasks: p.tasks?.map((t: any) => ({
-              ...t,
-              createdAt: t.createdAt ? t.createdAt : undefined,
-              completedAt: t.completedAt ? t.completedAt : undefined,
-            })) || [],
-            activities: p.activities?.map((a: any) => ({
-              ...a,
-              timestamp: a.timestamp || new Date().toISOString(),
-            })) || [],
-          })));
-        } else {
-          setProjects(mockProjects);
-        }
+        // Projetos - com safeParse e normalização
+        const parsedProjects = safeParse<Project[]>(
+          savedProjects,
+          mockProjects,
+          { storageKey: STORAGE_KEYS.PROJECTS, silent: true }
+        );
+        const normalizedProjects = parsedProjects.map((p: any) => ({
+          ...p,
+          tasks: p.tasks?.map((t: any) => ({
+            ...t,
+            createdAt: t.createdAt ? t.createdAt : undefined,
+            completedAt: t.completedAt ? t.completedAt : undefined,
+          })) || [],
+          activities: p.activities?.map((a: any) => ({
+            ...a,
+            timestamp: a.timestamp || new Date().toISOString(),
+          })) || [],
+        }));
+        setProjects(normalizedProjects);
         
-        // Follow-ups - simplificado
-        if (savedFollowUps) {
-          try {
-            setFollowUps(JSON.parse(savedFollowUps));
-          } catch (e) {
-            setFollowUps(mockFollowUps);
-          }
-        } else {
-          setFollowUps(mockFollowUps);
-        }
+        // Follow-ups - com safeParse
+        const parsedFollowUps = safeParse<FollowUp[]>(
+          savedFollowUps,
+          mockFollowUps,
+          { storageKey: STORAGE_KEYS.FOLLOWUPS, silent: true }
+        );
+        setFollowUps(parsedFollowUps);
         
-        // Financeiro
-        if (savedFinancial) {
-          setFinancial(JSON.parse(savedFinancial));
-        } else {
-          setFinancial(mockFinancial);
-        }
+        // Financeiro - com safeParse
+        const parsedFinancial = safeParse<FinancialTransaction[]>(
+          savedFinancial,
+          mockFinancial,
+          { storageKey: STORAGE_KEYS.FINANCIAL, silent: true }
+        );
+        setFinancial(parsedFinancial);
         
         // Atividades
         setActivities(mockActivities);
@@ -275,50 +272,107 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   }, []);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // PERSISTÊNCIA AUTOMÁTICA - SIMPLIFICADA
+  // PERSISTÊNCIA AUTOMÁTICA COM DEBOUNCE
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
-  // ✅ CORRIGIDO: Salvar com tratamento robusto de erros
+  // Refs para debounce timers
+  const persistTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  
+  // Helper de persistência com debounce
+  const debouncedPersist = useCallback((key: string, data: any, delay: number = 500) => {
+    // Limpar timer anterior se existir
+    const existingTimer = persistTimers.current.get(key);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    
+    // Criar novo timer
+    const timer = setTimeout(() => {
+      if (data && (Array.isArray(data) ? data.length > 0 : true)) {
+        safeLocalStorageSet(key, data);
+      }
+      persistTimers.current.delete(key);
+    }, delay);
+    
+    persistTimers.current.set(key, timer);
+  }, []);
+  
+  // Limpar timers ao desmontar
+  useEffect(() => {
+    return () => {
+      persistTimers.current.forEach(timer => clearTimeout(timer));
+      persistTimers.current.clear();
+    };
+  }, []);
+  
+  // ✅ CORRIGIDO: Persistência com debounce para evitar race conditions
   useEffect(() => {
     if (!isLoading && members.length > 0) {
-      safeLocalStorageSet('nebula-members', members);
+      debouncedPersist(STORAGE_KEYS.MEMBERS, members);
     }
-  }, [members, isLoading]);
+  }, [members, isLoading, debouncedPersist]);
 
   useEffect(() => {
     if (!isLoading && clients.length > 0) {
-      safeLocalStorageSet('nebula-clients', clients);
+      debouncedPersist(STORAGE_KEYS.CLIENTS, clients);
     }
-  }, [clients, isLoading]);
+  }, [clients, isLoading, debouncedPersist]);
 
   useEffect(() => {
     if (!isLoading && leads.length > 0) {
-      safeLocalStorageSet('nebula-leads', leads);
+      debouncedPersist(STORAGE_KEYS.LEADS, leads);
     }
-  }, [leads, isLoading]);
+  }, [leads, isLoading, debouncedPersist]);
 
   useEffect(() => {
     if (!isLoading && projects.length > 0) {
-      safeLocalStorageSet('nebula-projects', projects);
+      debouncedPersist(STORAGE_KEYS.PROJECTS, projects);
     }
-  }, [projects, isLoading]);
+  }, [projects, isLoading, debouncedPersist]);
 
   useEffect(() => {
     if (!isLoading && followUps.length > 0) {
-      safeLocalStorageSet('nebula-followups', followUps);
+      debouncedPersist(STORAGE_KEYS.FOLLOWUPS, followUps);
     }
-  }, [followUps, isLoading]);
+  }, [followUps, isLoading, debouncedPersist]);
 
   useEffect(() => {
     if (!isLoading && financial.length > 0) {
-      safeLocalStorageSet('nebula-financial', financial);
+      debouncedPersist(STORAGE_KEYS.FINANCIAL, financial);
     }
-  }, [financial, isLoading]);
+  }, [financial, isLoading, debouncedPersist]);
 
   // ✅ Inicializar monitoramento de storage
   useEffect(() => {
     initStorageMonitoring();
   }, []);
+  
+  // ✅ NOVO: Auto-limpeza de órfãos periódica
+  useEffect(() => {
+    // Executar limpeza inicial após carregar
+    if (!isLoading) {
+      const timer = setTimeout(() => {
+        const result = cleanOrphans();
+        if (result.cleaned > 0) {
+          console.log('🧹 Limpeza inicial de órfãos:', result.details);
+        }
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, cleanOrphans]);
+  
+  // Auto-limpeza periódica (a cada 5 minutos)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const result = cleanOrphans();
+      if (result.cleaned > 0) {
+        console.warn('🧹 Auto-limpeza periódica:', result.details);
+      }
+    }, 5 * 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, [cleanOrphans]);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // FUNÇÕES DE EVENTO
@@ -338,8 +392,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     });
   }, [eventListeners]);
   
+  // ✅ CORRIGIDO: addEventListener retorna cleanup function
   const addEventListener = useCallback((callback: (event: DataEvent) => void) => {
     setEventListeners(prev => [...prev, callback]);
+    
+    // Retornar função de cleanup para remover listener
+    return () => {
+      setEventListeners(prev => prev.filter(cb => cb !== callback));
+    };
   }, []);
   
   const removeEventListener = useCallback((callback: (event: DataEvent) => void) => {

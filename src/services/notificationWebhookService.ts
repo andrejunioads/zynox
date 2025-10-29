@@ -4,6 +4,9 @@
  * Serviço para enviar todos os eventos de notificação para um webhook n8n configurado
  */
 
+import { STORAGE_KEYS } from '@/config/storage';
+import { safeParse, safeStringify } from '@/lib/safeParse';
+
 export interface NotificationEvent {
   tipo: 'lead' | 'meeting' | 'task' | 'project' | 'financial' | 'team' | 'followup' | 'stage_change' | 'payment' | 'birthday' | 'contract_expiring' | 'project_deadline' | 'custom';
   titulo: string;
@@ -28,31 +31,33 @@ class NotificationWebhookService {
    * Carregar configuração do localStorage
    */
   private loadConfig() {
-    try {
-      const stored = localStorage.getItem('zynox_webhook_config');
-      if (stored) {
-        const config = JSON.parse(stored);
-        this.webhookUrl = config.webhookUrl || null;
-        this.isEnabled = config.isEnabled !== false; // true por padrão
-      }
-    } catch (error) {
-      console.error('Erro ao carregar config webhook:', error);
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.WEBHOOK_CONFIG);
+    const config = safeParse<any>(stored, {}, {
+      storageKey: STORAGE_KEYS.WEBHOOK_CONFIG,
+      silent: true
+    });
+    
+    this.webhookUrl = config.webhookUrl || null;
+    this.isEnabled = config.isEnabled !== false; // true por padrão
   }
 
   /**
    * Salvar configuração no localStorage
    */
   private saveConfig() {
-    try {
-      const config = {
-        webhookUrl: this.webhookUrl,
-        isEnabled: this.isEnabled,
-        lastUpdated: new Date().toISOString()
-      };
-      localStorage.setItem('zynox_webhook_config', JSON.stringify(config));
-    } catch (error) {
-      console.error('Erro ao salvar config webhook:', error);
+    const config = {
+      webhookUrl: this.webhookUrl,
+      isEnabled: this.isEnabled,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    const json = safeStringify(config, { silent: true });
+    if (json) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.WEBHOOK_CONFIG, json);
+      } catch (error) {
+        console.error('Erro ao salvar config webhook:', error);
+      }
     }
   }
 

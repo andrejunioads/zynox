@@ -6,8 +6,9 @@
 // Conecta dados de forma inteligente e em tempo real
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef, useMemo } from 'react';
 import { useData } from '@/contexts/DataContext';
+import { syncLogger } from '@/lib/logger';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TIPOS
@@ -68,23 +69,22 @@ export const useSmartSync = (config: Partial<SyncConfig> = {}) => {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // DEBOUNCE HELPER
+  // DEBOUNCE E CONTROLE DE SINCRONIZAÇÃO
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
-  const debounce = useCallback((func: Function, delay: number) => {
-    let timeoutId: NodeJS.Timeout;
-    return (...args: any[]) => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => func.apply(null, args), delay);
-    };
-  }, []);
+  const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSyncRef = useRef<number>(0);
+  const isSyncingRef = useRef(false);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SINCRONIZAÇÃO DE CONTADORES DE MEMBROS
+  // SINCRONIZAÇÃO DE CONTADORES (OTIMIZADO)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
-  const syncMemberCounters = useCallback(() => {
-    if (!finalConfig.syncMemberCounters) return;
+  // ✅ OTIMIZADO: Usar useMemo para cálculos
+  const memberCounters = useMemo(() => {
+    if (!finalConfig.syncMemberCounters) return new Map();
+    
+    const counters = new Map();
     
     members.forEach(member => {
       const assignedLeads = leads.filter(lead => lead.owner === member.id).length;
@@ -95,21 +95,32 @@ export const useSmartSync = (config: Partial<SyncConfig> = {}) => {
         project.tasks.filter(task => task.assignedTo === member.id)
       ).length;
       
+      counters.set(member.id, { assignedLeads, activeProjects, activeTasks });
+    });
+    
+    return counters;
+  }, [members, leads, projects, finalConfig.syncMemberCounters]);
+  
+  const syncMemberCounters = useCallback(() => {
+    if (!finalConfig.syncMemberCounters || isSyncingRef.current) return;
+    
+    members.forEach(member => {
+      const counters = memberCounters.get(member.id);
+      if (!counters) return;
+      
       // Atualizar apenas se mudou
       if (
-        member.assignedLeads !== assignedLeads ||
-        member.activeProjects !== activeProjects ||
-        member.activeTasks !== activeTasks
+        member.assignedLeads !== counters.assignedLeads ||
+        member.activeProjects !== counters.activeProjects ||
+        member.activeTasks !== counters.activeTasks
       ) {
         update('member', member.id, {
-          assignedLeads,
-          activeProjects,
-          activeTasks,
+          ...counters,
           lastActivity: new Date(),
         });
       }
     });
-  }, [members, leads, projects, update, finalConfig.syncMemberCounters]);
+  }, [members, memberCounters, update, finalConfig.syncMemberCounters]);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // SINCRONIZAÇÃO CLIENTE-PROJETO
@@ -239,15 +250,38 @@ export const useSmartSync = (config: Partial<SyncConfig> = {}) => {
   }, [clients, financial, relationships, update, finalConfig.syncClientFinancial]);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // SINCRONIZAÇÃO PRINCIPAL
+  // SINCRONIZAÇÃO PRINCIPAL (OTIMIZADA)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
   const performSync = useCallback(() => {
-    syncMemberCounters();
-    syncClientProjects();
-    syncMemberLeads();
-    syncProjectTasks();
-    syncClientFinancial();
+    // Prevenir sincronizações simultâneas
+    if (isSyncingRef.current) {
+      syncLogger.warn('Sincronização em andamento, ignorando nova chamada');
+      return;
+    }
+    
+    const now = Date.now();
+    const timeSinceLastSync = now - lastSyncRef.current;
+    
+    // Throttle: no mínimo 1s entre sincronizações
+    if (timeSinceLastSync < 1000) {
+      syncLogger.log(`Throttling sync (${timeSinceLastSync}ms desde último)`);
+      return;
+    }
+    
+    isSyncingRef.current = true;
+    lastSyncRef.current = now;
+    
+    try {
+      syncMemberCounters();
+      syncClientProjects();
+      syncMemberLeads();
+      syncProjectTasks();
+      syncClientFinancial();
+      syncLogger.log('Sincronização concluída');
+    } finally {
+      isSyncingRef.current = false;
+    }
   }, [
     syncMemberCounters,
     syncClientProjects,
@@ -257,27 +291,46 @@ export const useSmartSync = (config: Partial<SyncConfig> = {}) => {
   ]);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // DEBOUNCED SYNC
+  // DEBOUNCED SYNC (OTIMIZADO)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
-  const debouncedSync = useCallback(
-    debounce(performSync, finalConfig.debounceMs),
-    [performSync, finalConfig.debounceMs, debounce]
-  );
+  const debouncedSync = useCallback(() => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+    }
+    
+    syncTimerRef.current = setTimeout(() => {
+      performSync();
+      syncTimerRef.current = null;
+    }, finalConfig.debounceMs);
+  }, [performSync, finalConfig.debounceMs]);
+  
+  // Cleanup ao desmontar
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+      }
+    };
+  }, []);
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // EFEITOS DE SINCRONIZAÇÃO
+  // EFEITOS DE SINCRONIZAÇÃO (OTIMIZADO)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   
-  // Sincronizar quando dados mudarem
+  // ✅ OTIMIZADO: Sincronizar quando dados mudarem (com debounce)
   useEffect(() => {
     debouncedSync();
   }, [members, clients, leads, projects, financial, debouncedSync]);
   
-  // Sincronizar imediatamente no mount
+  // ✅ OTIMIZADO: Sincronizar imediatamente no mount (sem duplicação)
   useEffect(() => {
-    performSync();
-  }, [performSync]);
+    const timer = setTimeout(() => {
+      performSync();
+    }, 100); // Pequeno delay para evitar dupla execução
+    
+    return () => clearTimeout(timer);
+  }, []); // Apenas no mount
   
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // RETORNO

@@ -14,6 +14,8 @@ import {
 import { webhookService } from './notificationWebhookService';
 import { toast } from 'sonner';
 import { systemAutomations } from '@/data/systemAutomations';
+import { STORAGE_KEYS, SYSTEM_AUTOMATIONS_VERSION } from '@/config/storage';
+import { safeParse, safeStringify } from '@/lib/safeParse';
 
 class AutomationEngine {
   private automations: Automation[] = [];
@@ -38,25 +40,25 @@ class AutomationEngine {
    * Carregar automações do localStorage
    */
   private loadAutomations() {
-    try {
-      const stored = localStorage.getItem('zynox_automations');
-      if (stored) {
-        this.automations = JSON.parse(stored);
-        console.log(`🤖 ${this.automations.length} automações carregadas`);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar automações:', error);
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.AUTOMATIONS);
+    this.automations = safeParse<Automation[]>(stored, [], {
+      storageKey: STORAGE_KEYS.AUTOMATIONS,
+      silent: true
+    });
+    console.log(`🤖 ${this.automations.length} automações carregadas`);
   }
 
   /**
    * Salvar automações no localStorage
    */
   private saveAutomations() {
-    try {
-      localStorage.setItem('zynox_automations', JSON.stringify(this.automations));
-    } catch (error) {
-      console.error('Erro ao salvar automações:', error);
+    const json = safeStringify(this.automations, { silent: true });
+    if (json) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.AUTOMATIONS, json);
+      } catch (error) {
+        console.error('Erro ao salvar automações:', error);
+      }
     }
   }
 
@@ -64,21 +66,18 @@ class AutomationEngine {
    * Carregar logs do localStorage
    */
   private loadLogs() {
-    try {
-      const stored = localStorage.getItem('zynox_automation_logs');
-      if (stored) {
-        const parsedLogs = JSON.parse(stored);
-        // Converter timestamps de string para Date
-        this.executionLogs = parsedLogs.map((log: any) => ({
-          ...log,
-          timestamp: new Date(log.timestamp),
-        }));
-        console.log(`📋 ${this.executionLogs.length} logs carregados`);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar logs:', error);
-      this.executionLogs = [];
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.AUTOMATION_LOGS);
+    const parsedLogs = safeParse<any[]>(stored, [], {
+      storageKey: STORAGE_KEYS.AUTOMATION_LOGS,
+      silent: true
+    });
+    
+    // Converter timestamps de string para Date
+    this.executionLogs = parsedLogs.map((log: any) => ({
+      ...log,
+      timestamp: new Date(log.timestamp),
+    }));
+    console.log(`📋 ${this.executionLogs.length} logs carregados`);
   }
 
   /**
@@ -135,13 +134,17 @@ class AutomationEngine {
   }
 
   /**
-   * Instalar automações do sistema (na primeira inicialização)
+   * Instalar automações do sistema (na primeira inicialização ou atualização)
    */
   private installSystemAutomations() {
     try {
-      const installedFlag = localStorage.getItem('zynox_system_automations_installed');
+      const installedVersion = localStorage.getItem(STORAGE_KEYS.AUTOMATION_VERSION);
       
-      if (!installedFlag) {
+      // Instalar se nunca foi instalado OU se a versão é diferente
+      if (!installedVersion || installedVersion !== SYSTEM_AUTOMATIONS_VERSION) {
+        if (installedVersion) {
+          console.log(`📦 Atualizando automações: ${installedVersion} → ${SYSTEM_AUTOMATIONS_VERSION}`);
+        } else {
         console.log('📦 Instalando automações do sistema...');
         
         // Deletar automações antigas primeiro (caso existam)
@@ -165,11 +168,12 @@ class AutomationEngine {
         
         this.saveAutomations();
         
-        // Marcar como instalado
-        localStorage.setItem('zynox_system_automations_installed', 'true');
-        console.log(`🎉 ${systemAutomations.length} automações do sistema instaladas!`);
+        // Marcar versão instalada
+        localStorage.setItem(STORAGE_KEYS.AUTOMATION_VERSION, SYSTEM_AUTOMATIONS_VERSION);
+        console.log(`🎉 ${systemAutomations.length} automações do sistema instaladas (v${SYSTEM_AUTOMATIONS_VERSION})!`);
+        }
       } else {
-        console.log('✓ Automações do sistema já instaladas');
+        console.log(`✓ Automações do sistema já instaladas (v${SYSTEM_AUTOMATIONS_VERSION})`);
       }
     } catch (error) {
       console.error('Erro ao instalar automações do sistema:', error);
@@ -570,10 +574,13 @@ class AutomationEngine {
     }
 
     // Salvar logs no localStorage
-    try {
-      localStorage.setItem('zynox_automation_logs', JSON.stringify(this.executionLogs));
-    } catch (error) {
-      console.error('Erro ao salvar logs:', error);
+    const json = safeStringify(this.executionLogs, { silent: true });
+    if (json) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.AUTOMATION_LOGS, json);
+      } catch (error) {
+        console.error('Erro ao salvar logs:', error);
+      }
     }
   }
 
@@ -595,7 +602,7 @@ class AutomationEngine {
    */
   clearLogs() {
     this.executionLogs = [];
-    localStorage.removeItem('zynox_automation_logs');
+    localStorage.removeItem(STORAGE_KEYS.AUTOMATION_LOGS);
   }
 
   /**
@@ -608,8 +615,8 @@ class AutomationEngine {
       // 1. Deletar automações antigas do sistema
       this.deleteSystemAutomations();
       
-      // 2. Remover flag de instalação
-      localStorage.removeItem('zynox_system_automations_installed');
+      // 2. Remover versão instalada para forçar reinstalação
+      localStorage.removeItem(STORAGE_KEYS.AUTOMATION_VERSION);
       
       // 3. Instalar novamente
       this.installSystemAutomations();

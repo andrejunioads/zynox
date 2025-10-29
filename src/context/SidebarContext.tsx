@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { STORAGE_KEYS } from "@/config/storage";
 
 type SidebarContextValue = {
   collapsed: boolean;
@@ -8,14 +9,12 @@ type SidebarContextValue = {
 
 const SidebarContext = createContext<SidebarContextValue | undefined>(undefined);
 
-const STORAGE_KEY = "sidebar-collapsed";
-
 const getInitialState = () => {
   if (typeof window === "undefined") {
     return false;
   }
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const stored = window.localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED);
     return stored ? stored === "true" : false;
   } catch (error) {
     console.warn("Não foi possível ler o estado da sidebar do localStorage.", error);
@@ -29,7 +28,7 @@ export const SidebarProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(STORAGE_KEY, collapsed.toString());
+        window.localStorage.setItem(STORAGE_KEYS.SIDEBAR_COLLAPSED, collapsed.toString());
       } catch (error) {
         console.warn("Não foi possível salvar o estado da sidebar no localStorage.", error);
       }

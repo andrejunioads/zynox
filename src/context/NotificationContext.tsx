@@ -198,22 +198,8 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     return notifications.filter(n => n.type === type);
   };
 
-  // Simular notificações automáticas (exemplo)
-  useEffect(() => {
-    // Exemplo: notificação de follow-up a cada 30 segundos (apenas para demonstração)
-    const interval = setInterval(() => {
-      // Descomentar para testar
-      // addNotification({
-      //   type: 'lead',
-      //   title: 'Follow-up atrasado',
-      //   message: 'Lead "Maria Santos" sem interação há 3 dias',
-      //   priority: 'medium',
-      //   actionUrl: '/comercial',
-      // });
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
+  // ✅ REMOVIDO: Código comentado desnecessário
+  // Notificações automáticas são gerenciadas pelo notificationScheduler
 
   return (
     <NotificationContext.Provider

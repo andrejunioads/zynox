@@ -6,6 +6,8 @@
  */
 
 import { automationEngine } from './automationEngine';
+import { STORAGE_KEYS } from '@/config/storage';
+import { safeParse } from '@/lib/safeParse';
 
 interface Cliente {
   id: string;
@@ -311,30 +313,27 @@ class NotificationScheduler {
    */
 
   private getClientes(): Cliente[] {
-    try {
-      const stored = localStorage.getItem('zynox_clientes');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.CLIENTS);
+    return safeParse<Cliente[]>(stored, [], { 
+      storageKey: STORAGE_KEYS.CLIENTS,
+      silent: true 
+    });
   }
 
   private getProjetos(): Projeto[] {
-    try {
-      const stored = localStorage.getItem('zynox_projetos');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.PROJECTS);
+    return safeParse<Projeto[]>(stored, [], { 
+      storageKey: STORAGE_KEYS.PROJECTS,
+      silent: true 
+    });
   }
 
   private getFollowUps(): FollowUp[] {
-    try {
-      const stored = localStorage.getItem('zynox_followups');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = localStorage.getItem(STORAGE_KEYS.FOLLOWUPS);
+    return safeParse<FollowUp[]>(stored, [], { 
+      storageKey: STORAGE_KEYS.FOLLOWUPS,
+      silent: true 
+    });
   }
 
   /**
@@ -349,11 +348,6 @@ class NotificationScheduler {
 // Singleton instance
 export const notificationScheduler = new NotificationScheduler();
 
-// Auto-start
-if (typeof window !== 'undefined') {
-  // Iniciar após 5 segundos (dar tempo para o app carregar)
-  setTimeout(() => {
-    notificationScheduler.start();
-  }, 5000);
-}
+// ✅ CORRIGIDO: Removido auto-start
+// O scheduler é iniciado explicitamente no App.tsx com useEffect
 
