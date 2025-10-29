@@ -1,0 +1,114 @@
+{
+  "name": "Zynox Push - Pushover Mobile",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "zynox-push-mobile",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Processar dados recebidos\nconst tipo = $input.item.json.tipo || 'notification';\nconst titulo = $input.item.json.titulo || 'Notificação Zynox';\nconst mensagem = $input.item.json.mensagem || '';\nconst prioridade = $input.item.json.prioridade || 'medium';\nconst actionUrl = $input.item.json.actionUrl || '/';\n\n// Mapear prioridade\nlet pushoverPriority = 0;\nif (prioridade === 'urgent') pushoverPriority = 2;\nelse if (prioridade === 'high') pushoverPriority = 1;\nelse if (prioridade === 'low') pushoverPriority = -1;\n\n// Mapear som por tipo\nconst sounds = {\n  'lead': 'cosmic',\n  'meeting': 'siren',\n  'task': 'pushover',\n  'project': 'intermission',\n  'financial': 'cashregister',\n  'team': 'bugle'\n};\nconst sound = sounds[tipo] || 'pushover';\n\nreturn {\n  json: {\n    titulo,\n    mensagem,\n    tipo,\n    prioridade: pushoverPriority,\n    sound,\n    actionUrl: 'https://zynox-crm-3e828.web.app' + actionUrl,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "function-1",
+      "name": "Process Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pushover.net/1/messages.json",
+        "sendBody": true,
+        "specifyBody": "formData",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "a7kvbu8y9k7dp3odvtep58ykyybxe1"
+            },
+            {
+              "name": "user",
+              "value": "ugr82xf7h3fgjxe57x1dm1gm4ti23w"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.titulo }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.mensagem }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.prioridade }}"
+            },
+            {
+              "name": "sound",
+              "value": "={{ $json.sound }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.actionUrl }}"
+            },
+            {
+              "name": "url_title",
+              "value": "Abrir Zynox CRM"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-1",
+      "name": "Send Pushover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Data": {
+      "main": [
+        [
+          {
+            "node": "Send Pushover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-26T00:00:00.000Z",
+  "versionId": "1"
+}
+
+
+
